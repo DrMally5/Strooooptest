@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Stroop Demo — Learn by Doing</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- jsPsych 7 (CDN) -->
+  <script src="https://unpkg.com/jspsych@7.3.3/dist/jspsych.js"></script>
+  <script src="https://unpkg.com/@jspsych/plugin-html-keyboard-response@1.2.0"></script>
+  <link href="https://unpkg.com/jspsych@7.3.3/css/jspsych.css" rel="stylesheet" />
+  <style>
+    body { background:#191919; color:#eee; }
+    .jspsych-content { max-width: 900px; }
+    .muted { color:#aaa; font-size: 16px; }
+    .big { font-size: 48px; }
+    .ink { font-weight: 800; font-size: 96px; letter-spacing: 2px; }
+    .row { margin: 6px 0; }
+    .btn { display:inline-block; padding:10px 14px; border:1px solid #777; border-radius:8px; text-decoration:none; color:#eee; margin-top:10px;}
+    .btn:hover { background:#333; }
+    .center { text-align:center; }
+  </style>
+</head>
+<body>
+<div id="jspsych-target"></div>
+
+<script>
+  // ===== Config =====
+  const PRACTICE_TRIALS = 8;
+  const MAIN_TRIALS = 24;
+  const ITI_MS = 350;
+  const COLORS = ["red","green","blue","yellow"];
+  const COLOR_RGB = {
+    red:    "rgb(255,0,0)",
+    green:  "rgb(0,200,0)",
+    blue:   "rgb(0,120,255)",
+    yellow: "rgb(255,210,0)"
+  };
+  const KEYMAP = { r:"red", g:"green", b:"blue", y:"yellow" };
+
+  // From your dataset summary:
+  // mean effect ≈ 7.903 "units", conversion ≈ 40 ms per unit → ~314 ms
+  const POP_EFFECT_MS = 314;
+  const MIN_RT = 200;     // simple quality filter
+  const MAX_RT = 3000;
+
+  // ===== Helpers =====
+  function makeBalancedTrials(n) {
+    const half = Math.floor(n/2);
+    const conds = Array(half).fill(true).concat(Array(n - half).fill(false)); // true=congruent
+    // shuffle
+    for (let i=conds.length-1;i>0;i--) {
+      const j = Math.floor(Math.random()*(i+1)); [conds[i],conds[j]]=[conds[j],conds[i]];
+    }
+    const trials = [];
+    conds.forEach(congruent => {
+      const word = COLORS[Math.floor(Math.random()*COLORS.length)];
+      let ink = word;
+      if (!congruent) {
+        const alts = COLORS.filter(c => c !== word);
+        ink = alts[Math.floor(Math.random()*alts.length)];
+      }
+      trials.push({word, ink, congruent});
+    });
+    return trials;
+  }
+
+  function resultsCSV(trials) {
+    const header = ["block","trial","word","ink","congruent","response_color","correct","rt_ms"];
+    const rows = trials.map((t,i) => [
+      t.block, i+1, t.word, t.ink, t.congruent, t.response_color ?? "", t.correct, Math.round(t.rt)
+    ]);
+    return [header.join(","), ...rows.map(r=>r.join(","))].join("\n");
+  }
+
+  function download(filename, text) {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([text], {type:"text/csv"}));
+    a.download = filename;
+    a.click();
+  }
+
+  function mean(arr) {
+    const xs = arr.filter(x => Number.isFinite(x));
+    if (xs.length===0) return NaN;
+    return xs.reduce((a,b)=>a+b,0)/xs.length;
+  }
+
+  // Compute per-condition means from collected trials (correct-only, filtered)
+  function summarize(trials) {
+    const correct = trials.filter(t => t.correct && t.rt >= MIN_RT && t.rt <= MAX_RT);
+    const cong = correct.filter(t => t.congruent).map(t => t.rt);
+    const incong = correct.filter(t => !t.congruent).map(t => t.rt);
+    const cong_m = mean(cong);
+    const incong_m = mean(incong);
+    return {
+      cong_ms: cong_m,
+      incong_ms: incong_m,
+      effect_ms: (incong_m - cong_m)
+    };
+  }
+
+  // ===== Build timeline =====
+  const jsPsych = initJsPsych({display_element: 'jspsych-target'});
+
+  const intro1 = {
+    type: jsPsychHtmlKeyboardResponse,
+    stimulus: `
+      <div class="center">
+        <h2>What are we testing?</h2>
+        <div class="row">Does the <b>meaning</b> of a color word interfere with naming its <b>INK COLOR</b>?</div>
+        <div class="row">Example: the word <b>RED</b> printed in <span style="color:${COLOR_RGB.green}">green</span> — do you respond slower?</div>
+        <div class="row muted">Press SPACE to continue…</div>
+      </div>
+    `,
+    choices: [' ']
+  };
+
+  const intro2 = {
+    type: jsPsychHtmlKeyboardResponse,
+    stimulus: `
+      <div class="center">
+        <h2>Your task</h2>
+        <div class="row">Say the <b>INK COLOR</b>, not the word.</div>
+        <div class="row">Use your keyboard: <b>R</b>=red, <b>G</b>=green, <b>B</b>=blue, <b>Y</b>=yellow</div>
+        <div class="row muted">Press SPACE to see examples…</div>
+      </div>
+    `,
+    choices: [' ']
+  };
+
+  const examples = {
+    type: jsPsychHtmlKeyboardResponse,
+    stimulus: `
+      <div class="center">
+        <h2>Examples</h2>
+        <div style="display:flex; gap:40px; justify-content:center; margin-top:10px;">
+          <div>
+            <div class="row" style="color:#0f0">Congruent</div>
+            <div class="ink" style="color:${COLOR_RGB.red}">RED</div>
+          </div>
+          <div>
+            <div class="row" style="color:#f90">Incongruent</div>
+            <div class="ink" style="color:${COLOR_RGB.green}">RED</div>
+          </div>
+        </div>
+        <div class="row" style="margin-top:30px;">Say the <b>INK COLOR</b>, not the word.</div>
+        <div class="row muted">Press SPACE to try a short practice…</div>
+      </div>
+    `,
+    choices: [' ']
+  };
+
+  // Stimulus trial factory
+  function trialHTML(word, ink, footer="R=red  G=green  B=blue  Y=yellow") {
+    return `
+      <div class="center">
+        <div class="row muted">Name the INK COLOR (not the word)</div>
+        <div class="ink" style="color:${COLOR_RGB[ink]}">${word.toUpperCase()}</div>
+        <div class="row muted" style="margin-top:26px;">${footer}</div>
+      </div>
+    `;
+  }
+
+  function buildTrials(blockName, nTrials, withFeedback=true) {
+    const vars = makeBalancedTrials(nTrials);
+    const trials = [];
+
+    vars.forEach((v, idx) => {
+      trials.push({
+        type: jsPsychHtmlKeyboardResponse,
+        stimulus: trialHTML(v.word, v.ink),
+        choices: ['r','g','b','y','R','G','B','Y'],
+        data: { block: blockName, word: v.word, ink: v.ink, congruent: v.congruent },
+        on_finish: (data) => {
+          const key = (data.response || '').toLowerCase();
+          const color = KEYMAP[key] || null;
+          data.response_color = color;
+          data.correct = (color === v.ink);
+          // jsPsych stores RT as "rt"
+        }
+      });
+
+      if (withFeedback) {
+        trials.push({
+          type: jsPsychHtmlKeyboardResponse,
+          stimulus: function(){
+            const last = jsPsych.data.get().last(1).values()[0];
+            const ok = last.correct;
+            const ink = last.ink.toUpperCase();
+            const msg = ok ? "Correct!" : `Incorrect — correct was ${ink}`;
+            const col = ok ? "#0f0" : "#f64";
+            return `<div class="center"><div class="big" style="color:${col}">${msg}</div></div>`;
+          },
+          choices: "NO_KEYS",
+          trial_duration: ITI_MS
+        });
+      }
+    });
+
+    return trials;
+  }
+
+  const practiceIntro = {
+    type: jsPsychHtmlKeyboardResponse,
+    stimulus: `
+      <div class="center">
+        <h2>Practice</h2>
+        <div class="row">Try a few trials with feedback.</div>
+        <div class="row muted">Press SPACE to start practice…</div>
+      </div>
+    `,
+    choices: [' ']
+  };
+
+  const practiceTrials = buildTrials("practice", PRACTICE_TRIALS, true);
+
+  const practiceSummary = {
+    type: jsPsychHtmlKeyboardResponse,
+    stimulus: function(){
+      const prac = jsPsych.data.get().filter({block:"practice"}).values();
+      const sum = summarize(prac);
+      const cong = Math.round(sum.cong_ms);
+      const incong = Math.round(sum.incong_ms);
+      const eff = Math.round(sum.effect_ms);
+      return `
+        <div class="center">
+          <h2>Practice Summary</h2>
+          <div class="row">Congruent ≈ <b>${cong} ms</b> &nbsp; Incongruent ≈ <b>${incong} ms</b></div>
+          <div class="row">Your practice Stroop effect ≈ <b>${eff} ms</b></div>
+          <div class="row muted">Press SPACE to begin the main test…</div>
+        </div>
+      `;
+    },
+    choices: [' ']
+  };
+
+  const mainIntro = {
+    type: jsPsychHtmlKeyboardResponse,
+    stimulus: `
+      <div class="center">
+        <h2>Main Test</h2>
+        <div class="row">Now you'll complete ${MAIN_TRIALS} trials.</div>
+        <div class="row">Try to be accurate <i>and</i> fast.</div>
+        <div class="row muted">Press SPACE to start…</div>
+      </div>
+    `,
+    choices: [' ']
+  };
+
+  const mainTrials = buildTrials("main", MAIN_TRIALS, true);
+
+  const mainSummary = {
+    type: jsPsychHtmlKeyboardResponse,
+    stimulus: function(){
+      const main = jsPsych.data.get().filter({block:"main"}).values();
+      const sum = summarize(main);
+      const cong = Math.round(sum.cong_ms);
+      const incong = Math.round(sum.incong_ms);
+      const eff = Math.round(sum.effect_ms);
+      const verdict = (eff < POP_EFFECT_MS)
+        ? `<span style="color:#0f0">You showed less interference than the dataset average! 🧠</span>`
+        : `<span style="color:#f64">Your interference was larger than the dataset average. ⏳</span>`;
+      return `
+        <div class="center">
+          <h2>Your Results</h2>
+          <div class="row">We asked: Does the word's meaning slow you down when it conflicts with the ink color?</div>
+          <div class="row">Stroop effect = Incongruent RT − Congruent RT</div>
+          <div class="row" style="margin-top:14px;">Congruent ≈ <b>${cong} ms</b> &nbsp; Incongruent ≈ <b>${incong} ms</b></div>
+          <div class="row">Your Stroop effect ≈ <b>${eff} ms</b></div>
+          <div class="row" style="margin-top:10px;">Dataset average Stroop effect ≈ <b>${POP_EFFECT_MS} ms</b></div>
+          <div class="row" style="margin-top:16px;">${verdict}</div>
+          <div class="row" style="margin-top:24px;">
+            <a class="btn" id="dl">Download my data (CSV)</a>
+          </div>
+          <div class="row muted">Press SPACE to finish…</div>
+        </div>
+      `;
+    },
+    choices: [' '],
+    on_load: function(){
+      // enable download
+      const dataAll = jsPsych.data.get().values();
+      const csv = resultsCSV(dataAll);
+      document.getElementById('dl').addEventListener('click', () => download('stroop_results.csv', csv));
+    }
+  };
+
+  const endScreen = {
+    type: jsPsychHtmlKeyboardResponse,
+    stimulus: `
+      <div class="center">
+        <h2>Thank you!</h2>
+        <div class="row">This demo shows how automatic reading can interfere with naming colors.</div>
+        <div class="row">Share this link so others can try it.</div>
+        <div class="row muted">You may close the tab.</div>
+      </div>
+    `,
+    choices: "NO_KEYS",
+    trial_duration: 2000
+  };
+
+  jsPsych.run([
+    intro1, intro2, examples,
+    practiceIntro, ...practiceTrials, practiceSummary,
+    mainIntro, ...mainTrials, mainSummary, endScreen
+  ]);
+</script>
+</body>
+</html>
